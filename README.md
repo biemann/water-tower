@@ -1,6 +1,6 @@
-# Smart Water Software — Water-Tower Case Study, official implementation
+# Reimplementation of Water tower environment
 
-Reference implementation of the water-tower case study of
+Unofficial implementation of the water-tower case study of
 
 > C. S. Kallesoe, A. K. Nilsson, H. Madsen et al., *Smart Water Software: The
 > Development of an Efficient Model Predictive Control System for Water
@@ -75,79 +75,121 @@ and the friction fit recovers th1 = 4.8e-5, th3 = 4.1e-5, th5 = 0.336 at
 
 ## MPC formulation
 
-### Open loop (v1, eq. 14 in discrete time, eq. 22)
+Notation follows the papers: $d_1$ is the supply flow, $h$ the reservoir
+level, $p_0$/$p_1$ the inlet/outlet pressure of the pumping station, $c(t)$
+the known electricity price, $\eta$ the pump efficiency, $\kappa$ the
+terminal weight, $\lambda_0 = 1/A$ with reservoir area $A$, $\alpha$ the
+level-to-pressure scaling, $g_\lambda$, $g_\mu$ the demand prediction models
+of PZ1 and PZ2, $\delta t$ the sampling time, $t_0$ the current time and $M$
+the prediction horizon in samples ($M\,\delta t = T$).  Bold symbols stack
+the $M$ samples, $G$ is the lower-triangular ones matrix of (19), and
+$C = \operatorname{diag}(c(t_1), \dots, c(t_M))$.
 
-One solve over the full 10-day window, $N = 241$ hourly steps, with the
-nominal Fourier demand as the truth:
+### Open loop (v1)
 
-$$
-\min_{d_1,\,h}\ \sum_{k=0}^{N-1} c_k\,\frac{\bigl(p_{1,k}-p_0\bigr)\,d_{1,k}}{\eta}\,k_p\,\Delta t
-\;+\;\kappa\,\bigl(h_N-h_0\bigr)^2
-$$
-
-subject to
-
-$$
-h_{k+1} = h_k + \frac{\Delta t}{A}\bigl(d_{1,k} - \bar d^{(1)}_k - \bar d^{(2)}_k\bigr),
-\qquad
-p_{1,k} = f_\theta\bigl(d_{1,k}, \bar d^{(1)}_k\bigr) + \alpha\bigl(h_{k+1}+h_0\bigr),
-$$
+The continuous problem is (14):
 
 $$
-h_{\min} \le h_k \le h_{\max}, \qquad 0 \le d_{1,k} \le D_1^{\max}, \qquad h_0 = h(t_0).
+\min_{d_1}\ \int_{t_0}^{t_0+T} \frac{2\,c(\tau)\,\bigl(p_1(d_1, h, \tau) - p_0\bigr)\,d_1(\tau)}{\eta}\,d\tau \;+\; \kappa\,\bigl(h(t_0 + T) - h(t_0)\bigr)^2 \tag{14a}
 $$
 
-The stage cost is price $\times$ electrical power, $k_p$ converting
-$\mathrm{bar\cdot m^3/h}$ to kW; a $10^{-6}\,d_1^2$ regulariser keeps the
-solution unique and is not part of the paper.
+$$
+A\,\dot h(t) = d_1(t) - \tfrac{1}{\lambda_0} g_\lambda(t) - g_\mu(t) \tag{14b}
+$$
+
+$$
+p_1(d_1, h, t) = f_\theta(d_1, t) + \alpha\,h \tag{14c}
+$$
+
+$$
+0 \leq \underline{h} \leq h(t) \leq \bar{h}, \qquad 0 \leq \underline{d}_1 \leq d_1(t) \leq \bar{d}_1 \tag{14d}
+$$
+
+With piecewise-constant flows over the samples, (14b) integrates to (18),
+
+$$
+h(t) = h(t - \delta t) + \frac{\delta t}{A} d_1(t) + \frac{1}{A}\bigl(v_\lambda(t) - v_\mu(t)\bigr), \qquad v_\lambda(t) = \int_{t-\delta t}^{t} \tfrac{1}{\lambda_0} g_\lambda(\tau)\,d\tau, \tag{18}
+$$
+
+and on vector form (19)–(20),
+
+$$
+\mathbf{h} = \mathbf{1}\,h(t_0) + \lambda_0\,G\,\bigl(\delta t\,\mathbf{d}_1 - \mathbf{v}_\lambda - \mathbf{v}_\mu\bigr), \qquad \mathbf{p}_1 = \mathbf{f}_\theta(\mathbf{d}_1) + \alpha\,\mathbf{h}. \tag{19,20}
+$$
+
+Since the terminal term reduces to
+$h(t_0+T) - h(t_0) = \lambda_0\,\mathbf{1}^{\top}\bigl(\delta t\,\mathbf{d}_1 - \mathbf{v}_\lambda - \mathbf{v}_\mu\bigr)$
+by (21), the discrete problem actually solved (`make_mpc`, via IPOPT) is
+(22) with (23b):
+
+$$
+\min_{\mathbf{d}_1 \in \mathbb{R}^M}\ \mathbf{d}_1^{\top} C\,\bigl(\mathbf{p}_1 - \mathbf{1} p_0\bigr) + \bigl(\mathbf{p}_1 - \mathbf{1} p_0\bigr)^{\top} C\,\mathbf{d}_1 \;+\; \kappa\,\lambda_0^2\,\bigl(\mathbf{1}^{\top}\!\bigl(\delta t\,\mathbf{d}_1 - \mathbf{v}_\lambda - \mathbf{v}_\mu\bigr)\bigr)^2 \tag{22}
+$$
+
+$$
+\underline{h}\,\mathbf{1} \leq \mathbf{h} \leq \bar{h}\,\mathbf{1}, \qquad \underline{d}_1\,\mathbf{1} \leq \mathbf{d}_1 \leq \bar{d}_1\,\mathbf{1} \tag{23b}
+$$
+
+The open loop takes $M = 241$ hourly samples over the full 10-day window
+with the nominal Fourier demands as $\mathbf{v}_\lambda$, $\mathbf{v}_\mu$.
+
+Deliberate departures from the printed equations, kept explicit in the code:
+
+- the stage cost is normalised to price $\times$ electrical power,
+  $c\,(p_1 - p_0)\,d_1\,k_p/\eta$ with $k_p$ the
+  $\mathrm{bar\cdot m^3/h} \to \mathrm{kW}$ conversion, i.e. the paper's
+  factor $2$ in (14a) is absorbed; it only rescales the stage cost against
+  the $\kappa$ terminal term;
+- a $10^{-6}\,\lVert\mathbf{d}_1\rVert^2$ regulariser (uniqueness of the
+  solution) is added — it is not part of the paper;
+- the water-quality constraint (17)/(23c) is not enforced explicitly; as in
+  the paper's numerical section it is carried by the level band and the
+  $\kappa$ terminal term.
 
 ### Closed loop (v2, IFAC-PapersOnLine 56-2, 2023)
 
-`--receding` replans every hour over a 24 h horizon from the measured level,
-applies only the first flow, and steps the plant with the *realized* demand.
-Three layers, matching the v2 architecture:
+`--receding` replans every hour with $M = 24$ from the measured level,
+applies the first flow, and steps the plant with the *realized* demand.
+Three layers, matching the v2 architecture; the plant itself is
+deterministic, the demand is the only stochastic input.
 
-**Stochastic demand** (v2 eq. 2) — the only randomness in the environment;
-the tank balance itself is deterministic:
-
-$$
-\tilde d^{(i)}_k = \bar d^{(i)}_k + \sigma^{(i)}_k\,\varepsilon_k,
-\qquad
-\sigma^{(i)}_k = 2\,\hat\sigma_i\,\frac{\bar d^{(i)}_k}{\mathrm{mean}(\bar d^{(i)})},
-\qquad \varepsilon_k \sim \mathcal N(0,1),
-$$
-
-with $\hat\sigma_i$ the Fourier-fit residual of zone $i$.
-
-**Chance-constrained EMPC** (v2 eq. 13f/14, Remark 1) — the level bounds are
-tightened per step by
+**Stochastic demand** (v2 eq. 2) — the consumption in zone $i$ is the mean
+periodic profile plus noise whose variance scales with the mean:
 
 $$
-\gamma_k = \Phi^{-1}(0.95)\,\frac{\Delta t}{A}\,
-\sqrt{\bigl(\sigma^{(1)}_k\bigr)^2 + \bigl(\sigma^{(2)}_k\bigr)^2},
-\qquad
-h_{\min}+\gamma_k \le h_k \le h_{\max}-\gamma_k,
+d_i(t) = \bar{g}_i(t) + \varepsilon_i(t), \qquad \varepsilon_i(t) \sim \mathcal{N}\!\bigl(0,\ \sigma_i^2(\bar{g}_i(t))\bigr), \qquad \sigma_i(t) = 2\,\hat{\sigma}_i\,\frac{\bar{g}_i(t)}{\operatorname{mean}(\bar{g}_i)}, \tag{v2-2}
 $$
 
-the naive one-step-ahead form: the level error over one sample is
-$(\Delta t/A)\times$ the demand error, and the covariance is not propagated.
-Disable with `--no-chance` to recover the v1 deterministic bounds.
+with $\hat{\sigma}_i$ the residual std of the Fourier fit of zone $i$.
 
-**Local safety controller** (v2 Sec. 3.2, simplified) — projects the planned
-flow so the next level stays in bounds given the predicted demand, with
+**Chance-constrained EMPC** (v2 eq. 13f/14) — the level constraints are
+tightened by the one-step-ahead level uncertainty (the naive form of
+Remark 1: the level error over one sample is $\lambda_0\,\delta t$ times the
+demand error, and the covariance is not propagated):
+
+$$
+\underline{h} + \sigma(h, t) \;\leq\; h(t) \;\leq\; \bar{h} - \sigma(h, t), \qquad \sigma(h, t) = \Phi^{-1}(\alpha_{ch})\,\lambda_0\,\delta t\,\sqrt{\sigma_\lambda^2(t) + \sigma_\mu^2(t)}, \tag{v2-13f,14}
+$$
+
+with $\alpha_{ch} = 0.95$ and $\Phi$ the standard Gaussian cdf.  The
+terminal term keeps the v1 form $\kappa\,(h(t_0+T) - h(t_0))^2$ in place of
+the v2 end-equality (13b), and the v2 rate-of-change penalty $\rho$ in
+(13a) is not implemented.  Disable the tightening with `--no-chance` to
+recover the v1 deterministic bounds.
+
+**Local safety controller** (v2 Sec. 3.2, simplified) — projects the global
+controller's flow onto the set that keeps the next level within bounds,
 priority to the upper (overflow) bound:
 
 $$
-d_1^{\text{safe}} = \Pi_{[\,d_1^{\text{lo}},\,d_1^{\text{hi}}\,]}\bigl(d_1^{\text{MPC}}\bigr),
-\qquad
-d_1^{\text{lo/hi}} = \bar d^{(1)}_k + \bar d^{(2)}_k
-+ \frac{A}{\Delta t}\bigl(h_{\min/\max} - h_k\bigr).
+d_1^{LSC} = \Pi_{[\,\underline{u},\ \bar{u}\,]}\bigl(d_1^{GC}\bigr), \qquad \bar{u} = \bar{d}^{(1)} + \bar{d}^{(2)} + \frac{\bar{h} - h(t_0)}{\lambda_0\,\delta t}, \qquad \underline{u} = \bar{d}^{(1)} + \bar{d}^{(2)} + \frac{\underline{h} - h(t_0)}{\lambda_0\,\delta t}, \tag{v2-18,23}
 $$
 
-Simplifications with respect to the paper: the LSC runs hourly (paper:
-5 min) and uses the forecast demand in place of the paper's Kalman-filter
-estimate.  The plant is never clipped — any residual violation is realized
-noise the hourly safety layer cannot see and is reported per seed.
+then $d_1^{LSC}$ is further clipped to $[0, \bar{d}_1]$.  Simplifications
+with respect to the paper: the LSC runs hourly (paper: 5 min) and uses the
+forecast demand in place of the paper's Kalman-filter estimate.  The plant
+is never clipped — any residual violation is realized noise the hourly
+safety layer cannot see and is reported per seed.
 
 ## The experiment (paper Sec. 4.1, Fig. 7)
 
