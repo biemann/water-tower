@@ -2,10 +2,9 @@
 
 Implementation of the water-tower case study (v1) of
 
-    C. S. Kallesoe, A. K. Nilsson, H. Madsen et al.,
-    "Smart Water Software: The Development of an Efficient Model Predictive
-    Control System for Water Distribution Networks", IFAC-PapersOnLine 50-1
-    (2017) 6582-6587.
+    Kallesøe, Carsten Skovmose, Tom Nørgaard Jensen, and Jan Dimon Bendtsen.
+    "Plug-and-play model predictive control for water supply networks with
+    storage." IFAC-PapersOnLine 50.1 (2017): 6582-6587.
 
 By default this runs the open-loop economic MPC over the full 10-day window
 (v1: deterministic, one solve) and plots the result.  Use --receding for the

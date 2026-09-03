@@ -1,7 +1,8 @@
 """Identification of the Kallesoe reduced network model (eq. 8-13 of
 
-    C. S. Kallesoe et al., "Smart Water Software ...", IFAC-PapersOnLine
-    50-1 (2017) 6582-6587).
+    Kallesøe, Carsten Skovmose, Tom Nørgaard Jensen, and Jan Dimon Bendtsen.
+    "Plug-and-play model predictive control for water supply networks with
+    storage." IFAC-PapersOnLine 50.1 (2017): 6582-6587).
 
 Fits the two Fourier demand models and the friction/head model from the
 digitised paper data and writes every fitted parameter to data/model.json,
