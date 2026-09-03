@@ -45,6 +45,7 @@ BASE_PRESSURE = 2.408049                              # p0, eq. (14a)
 TERMINAL_WEIGHT = 0.062893                            # kappa, eq. (14a)
 POWER_COEF = 0.02778                                  # bar*m3/h -> kW
 PUMP_EFFICIENCY = 0.65                                # eta, eq. (14a)
+V_WQ = 100.0                                          # water-quality exchange threshold of (17), (23c), m3/day -- assumption, neither paper states V
 
 DEMAND_PERIOD_H = 24.0
 START_HOUR, END_HOUR = 0.0, 240.0                     # day 0 -> day 10
@@ -121,15 +122,30 @@ def make_friction(theta):
     return ca.Function('f_theta', [flow, water_demand1], [pressure_drop])
 
 
+def make_pressure_power(friction):
+    # supply pressure p1 = f_theta(d1, t) + alpha*(h + h0) of eq. (2), (20)
+    # and the pump power (p1 - p0)*d1*kW/eta of (14a); one Function used by
+    # the MPC cost and both post-solve diagnostics, so the model exists once
+    flow = ca.MX.sym('flow')
+    water_demand1 = ca.MX.sym('water_demand1')
+    level = ca.MX.sym('level')
+    pressure = friction(flow, water_demand1) \
+        + LEVEL_PRESSURE_COEF * (level + TOWER_HEIGHT)
+    pump_power = (pressure - BASE_PRESSURE) * flow * POWER_COEF / PUMP_EFFICIENCY
+    return ca.Function('pressure_power', [flow, water_demand1, level],
+                       [pressure, pump_power])
+
+
 def make_mpc(friction, steps, flow_max):
     # paper eq. (22): discrete-time form of (14) -- cost (14a), dynamics
     # (14b), pressure (14c), bounds (14d), over delta-t steps
     opti = ca.Opti()
+    pressure_power = make_pressure_power(friction)
     flow = opti.variable(steps)                 # d1 control action
     water_level = opti.variable(steps + 1)      # h state
     water_level_now = opti.parameter()
     level_reference = opti.parameter()          # terminal target, (14a)
-    water_demand1 = opti.parameter(steps)       # g_lambda/lambda0, (8)/(10)
+    water_demand1 = opti.parameter(steps)       # d_bar1 in m3/h: fitted g_lambda (paper: g_lambda/lambda0), (8)/(10)
     water_demand2 = opti.parameter(steps)       # g_mu, (9)/(11)
     price = opti.parameter(steps)               # c(tau), (14a)
     level_margin = opti.parameter(steps)        # chance-constraint tightening, v2 (13f)/(14)
@@ -148,11 +164,14 @@ def make_mpc(friction, steps, flow_max):
         # forward Euler of (14b) or (18)
         opti.subject_to(water_level[k + 1] == water_level[k]
                         + (TIME_STEP / AREA) * (flow[k] - water_demand1[k] - water_demand2[k]))
-        pressure = friction(flow[k], water_demand1[k]) \
-            + LEVEL_PRESSURE_COEF * water_level[k + 1] + LEVEL_PRESSURE_COEF * TOWER_HEIGHT  # (14c), (2)
-        cost += price[k] * (pressure - BASE_PRESSURE) * flow[k] \
-            * POWER_COEF / PUMP_EFFICIENCY + 1e-6 * flow[k] * flow[k]             # (14a) + small regularization
+        _, pump_power = pressure_power(flow[k], water_demand1[k], water_level[k + 1])
+        cost += price[k] * pump_power + 1e-6 * flow[k] * flow[k]             # (14a) + small regularization
     cost += TERMINAL_WEIGHT * (water_level[steps] - level_reference) ** 2         # (14a) terminal term
+    # (17), (23c): water quality -- the daily exchange through the tower, half
+    # of (in + out), must reach V; rate form, so V_WQ applies at any horizon
+    exchange = 0.5 * ca.sum1(ca.fabs(flow - water_demand1) + water_demand2) \
+        / steps * DEMAND_PERIOD_H * TIME_STEP
+    opti.subject_to(exchange >= V_WQ)
     opti.minimize(cost)
     opti.solver('ipopt', {'ipopt.print_level': 0, 'ipopt.sb': 'yes',
                           'print_time': 0, 'show_eval_warnings': False})
@@ -223,11 +242,13 @@ def run_open_loop(case, friction):
                                     case['water_demand1_forecast'], case['water_demand2_forecast'],
                                     case['price'],
                                     level_reference=case['water_level_start'])
-    # p1 = f_theta + alpha*h, with pn = alpha*(h + h0) of eq. (2); eq. (20)
-    pressures = np.array([float(friction(flows[k], case['water_demand1_forecast'][k]))
-                          + LEVEL_PRESSURE_COEF * (water_levels[k + 1] + TOWER_HEIGHT)
-                          for k in range(steps)])
-    powers = (pressures - BASE_PRESSURE) * flows * POWER_COEF / PUMP_EFFICIENCY
+    # p1 of eq. (2)/(20) and the power of (14a), evaluated at the solved
+    # trajectory by the same Function the cost uses
+    pressure_power = make_pressure_power(friction)
+    evaluated = [pressure_power(flows[k], case['water_demand1_forecast'][k],
+                                water_levels[k + 1]) for k in range(steps)]
+    pressures = np.array([float(value[0]) for value in evaluated])
+    powers = np.array([float(value[1]) for value in evaluated])
     return water_levels[1:], flows, pressures, powers
 
 
@@ -238,6 +259,7 @@ def run_receding_horizon(case, friction, seed, chance_constraints=True):
     water_demand1_realized, water_demand2_realized, std1, std2 = realize_demand(case, seed)
 
     mpc = make_mpc(friction, HORIZON, case['flow_max'])
+    pressure_power = make_pressure_power(friction)
     water_levels, flows, pressures, powers = [], [], [], []
     interventions = 0
     water_level = case['water_level_start']
@@ -268,12 +290,11 @@ def run_receding_horizon(case, friction, seed, chance_constraints=True):
 
         water_level = step_plant(water_level, flow, water_demand1_realized[k],
                                  water_demand2_realized[k])
-        pressure = float(friction(flow, water_demand1_realized[k])) \
-            + LEVEL_PRESSURE_COEF * (water_level + TOWER_HEIGHT)
+        pressure, pump_power = pressure_power(flow, water_demand1_realized[k], water_level)
         water_levels.append(water_level)
         flows.append(flow)
-        pressures.append(pressure)
-        powers.append((pressure - BASE_PRESSURE) * flow * POWER_COEF / PUMP_EFFICIENCY)
+        pressures.append(float(pressure))
+        powers.append(float(pump_power))
 
     water_levels = np.array(water_levels)
     violations = int(np.sum((water_levels < WATER_LEVEL_MIN - 1e-6)

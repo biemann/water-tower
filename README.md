@@ -50,7 +50,7 @@ numbers; the map is:
 
 | Paper | What | Where |
 | --- | --- | --- |
-| (8), (10) | Pressure-zone-1 demand `water_demand1 = g_lambda/lambda0`, truncated Fourier series, identified by least squares | `fit_models.py` -> `g_lambda` |
+| (8), (10) | Pressure-zone-1 demand (paper: `water_demand1 = g_lambda/lambda0`; here `g_lambda` is fitted directly in m3/h, see the units note under eq. (18)), truncated Fourier series, identified by least squares | `fit_models.py` -> `g_lambda` |
 | (11) | Pressure-zone-2 demand `water_demand2 = g_mu`, same Fourier structure | `fit_models.py` -> `g_mu` |
 | (12), (13) | reduced network `p1 - pn = f_theta(d1, t)`, five-term friction/head, NNLS identification | `fit_models.py` -> `f_theta` |
 | (2), (20) | `pn = alpha*(h + h0)`, `p1 = f_theta + alpha*h` | `make_friction`, MPC stage cost |
@@ -58,12 +58,14 @@ numbers; the map is:
 | (14b), (18) | `h_k+1 = h_k + (dt/A)*(d1_k - water_demand1_k - water_demand2_k)` | `make_mpc`, `step_plant` |
 | (14c) | `p1 = f_theta(d1, t) + alpha*h` | `make_mpc` |
 | (14d) | `h_min <= h <= h_max`, `0 <= d1 <= D1_MAX` | `opti.bounded` in `make_mpc` |
+| (15)-(17), (23c) | water-quality exchange, `0.5*sum(|d1 - water_demand1| + water_demand2)*24/steps >= V_WQ` (rate form, any horizon) | exchange constraint in `make_mpc` |
 | v2 (2) | demand noise, std scaled with the mean demand | `realize_demand` |
 | v2 (13f), (14) | chance-constrained level bounds, naive one-step form of Remark 1 | `level_margin` in `make_mpc`/`solve_mpc` |
 | v2 Sec. 3.2 | local safety controller (flow projection, simplified) | `apply_safety` |
 
 Fixed physics and identified constants: `alpha = 0.1`, `h0 = 30 m`,
-`p0 = 2.408 bar`, `eta = 0.65`, `kappa = 0.0629`.  `D1_MAX` is derived from
+`p0 = 2.408 bar`, `eta = 0.65`, `kappa = 0.0629`, and the water-quality
+exchange threshold `V_WQ = 100` m3/day (assumed, see (17)/(23c) below).  `D1_MAX` is derived from
 the data as max(observed `d1`) + 20 m3/h (with the day-0 start this includes
 the on/off startup spike, so the bound is generous; the MPC itself never
 exceeds ~80 m3/h) and the initial level is the digitised level at hour 0.
@@ -111,6 +113,19 @@ $$
 h(t_i) = h(t_{i-1}) + \frac{\Delta t}{A} \left( d_1(t_i) - \frac{1}{\lambda_0} g_\lambda(t_i) - g_\mu(t_i) \right) \qquad (18)
 $$
 
+**Units of `g_lambda`.**  (18) quotes the paper, whose $g_\lambda$ is *not* a
+flow: the paper identifies it from pressure samples via (9)-(10) (linear in
+$(\lambda_0, \lambda)$), so it carries units of level rate, and the user
+demand is $\bar d = A\, g_\lambda = \frac{1}{\lambda_0} g_\lambda$ (stated in
+the paper just before eq. (12)); that is why (14b)/(18) carry the factor
+$1/\lambda_0$ on $g_\lambda$ while $g_\mu$ — fitted against the *measured
+flow* $d_{n+1}$ in (11) — appears without one.  `fit_models.py` instead fits
+both Fourier models by least squares directly against the digitised m3/h
+demand series, so the code's `g_lambda` already is the flow and the balance
+is implemented symmetrically, `h += dt/A * (d1 - water_demand1 -
+water_demand2)`, with the paper's $1/\lambda_0$ absorbed into the fitted
+coefficients ($\texttt{g\_lambda}_\mathrm{code} = g_\lambda/\lambda_0$).
+
 Since
 
 $$
@@ -129,7 +144,24 @@ $$
 \underline{h} \leq h(t_i) \leq \bar{h}, \qquad 0 \leq d_1(t_i) \leq \bar{d}_1 \qquad (23b)
 $$
 
-with $p_1(t_i)$ from (14c) and $h(t_i)$ from (18).  The open loop takes
+with $p_1(t_i)$ from (14c) and $h(t_i)$ from (18), plus the water-quality
+exchange constraint (17), repeated as (23c): the tower turnover
+
+$$
+\frac{24}{M\Delta t} \, \frac{1}{2} \sum_{i=1}^{M} \left( | d_1(t_i) - \bar d_1(t_i) | + \bar d_2(t_i) \right) \Delta t \;\geq\; V \qquad (17), (23c)
+$$
+
+with the threshold $V = 100\,\mathrm{m^3/day}$ — an assumption, neither paper
+states $V$ (the WaterTower scripts use the same value).  The rate form keeps
+the threshold horizon-independent.  At this network's data the constraint is
+slack: over a periodic day the exchange measure cannot fall below the PZ2
+through-flow $\int \bar d_2 \approx 287\,\mathrm{m^3}$ (reached exactly by
+pure demand tracking, the constant-price optimum), and the solves realize
+$420$–$480\,\mathrm{m^3/day}$, so it guards against future cost/price
+configurations rather than shaping the solution shown.  The supply pressure
+$p_1$ and pump power of the cost and the post-solve diagnostics come from one
+shared `pressure_power` Function (`make_pressure_power`), so eq. (2)/(20) and
+the power conversion exist in a single place.  The open loop takes
 $M = 241$ hourly samples over the full 10-day window with the nominal Fourier
 demands $g_\lambda$ and $g_\mu$, and anchors the terminal term at $h(t_0)$.
 
