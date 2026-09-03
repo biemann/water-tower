@@ -83,38 +83,38 @@ level-to-pressure scaling, $g_\lambda$, $g_\mu$ the demand prediction models
 of PZ1 and PZ2, $\delta t$ the sampling time, $t_0$ the current time and $M$
 the prediction horizon in samples ($M\,\delta t = T$).  Bold symbols stack
 the $M$ samples, $G$ is the lower-triangular ones matrix of (19), and
-$C = \operatorname{diag}(c(t_1), \dots, c(t_M))$.
+$C = \mathrm{diag}(c(t_1), \dots, c(t_M))$.
 
 ### Open loop (v1)
 
 The continuous problem is (14):
 
 $$
-\min_{d_1}\ \int_{t_0}^{t_0+T} \frac{2\,c(\tau)\,\bigl(p_1(d_1, h, \tau) - p_0\bigr)\,d_1(\tau)}{\eta}\,d\tau \;+\; \kappa\,\bigl(h(t_0 + T) - h(t_0)\bigr)^2 \tag{14a}
+\min_{d_1}\ \int_{t_0}^{t_0+T} \frac{2\,c(\tau)\,\bigl(p_1(d_1, h, \tau) - p_0\bigr)\,d_1(\tau)}{\eta}\,d\tau \;+\; \kappa\,\bigl(h(t_0 + T) - h(t_0)\bigr)^2 \qquad (14a)
 $$
 
 $$
-A\,\dot h(t) = d_1(t) - \tfrac{1}{\lambda_0} g_\lambda(t) - g_\mu(t) \tag{14b}
+A\,\dot h(t) = d_1(t) - \tfrac{1}{\lambda_0} g_\lambda(t) - g_\mu(t) \qquad (14b)
 $$
 
 $$
-p_1(d_1, h, t) = f_\theta(d_1, t) + \alpha\,h \tag{14c}
+p_1(d_1, h, t) = f_\theta(d_1, t) + \alpha\,h \qquad (14c)
 $$
 
 $$
-0 \leq \underline{h} \leq h(t) \leq \bar{h}, \qquad 0 \leq \underline{d}_1 \leq d_1(t) \leq \bar{d}_1 \tag{14d}
+0 \leq \underline{h} \leq h(t) \leq \bar{h}, \qquad 0 \leq \underline{d}_1 \leq d_1(t) \leq \bar{d}_1 \qquad (14d)
 $$
 
 With piecewise-constant flows over the samples, (14b) integrates to (18),
 
 $$
-h(t) = h(t - \delta t) + \frac{\delta t}{A} d_1(t) + \frac{1}{A}\bigl(v_\lambda(t) - v_\mu(t)\bigr), \qquad v_\lambda(t) = \int_{t-\delta t}^{t} \tfrac{1}{\lambda_0} g_\lambda(\tau)\,d\tau, \tag{18}
+h(t) = h(t - \delta t) + \frac{\delta t}{A} d_1(t) + \frac{1}{A}\bigl(v_\lambda(t) - v_\mu(t)\bigr), \qquad v_\lambda(t) = \int_{t-\delta t}^{t} \tfrac{1}{\lambda_0} g_\lambda(\tau)\,d\tau, \qquad (18)
 $$
 
 and on vector form (19)–(20),
 
 $$
-\mathbf{h} = \mathbf{1}\,h(t_0) + \lambda_0\,G\,\bigl(\delta t\,\mathbf{d}_1 - \mathbf{v}_\lambda - \mathbf{v}_\mu\bigr), \qquad \mathbf{p}_1 = \mathbf{f}_\theta(\mathbf{d}_1) + \alpha\,\mathbf{h}. \tag{19,20}
+\mathbf{h} = \mathbf{1}\,h(t_0) + \lambda_0\,G\,\bigl(\delta t\,\mathbf{d}_1 - \mathbf{v}_\lambda - \mathbf{v}_\mu\bigr), \qquad \mathbf{p}_1 = \mathbf{f}_\theta(\mathbf{d}_1) + \alpha\,\mathbf{h}. \qquad (19,20)
 $$
 
 Since the terminal term reduces to
@@ -123,11 +123,11 @@ by (21), the discrete problem actually solved (`make_mpc`, via IPOPT) is
 (22) with (23b):
 
 $$
-\min_{\mathbf{d}_1 \in \mathbb{R}^M}\ \mathbf{d}_1^{\top} C\,\bigl(\mathbf{p}_1 - \mathbf{1} p_0\bigr) + \bigl(\mathbf{p}_1 - \mathbf{1} p_0\bigr)^{\top} C\,\mathbf{d}_1 \;+\; \kappa\,\lambda_0^2\,\bigl(\mathbf{1}^{\top}\!\bigl(\delta t\,\mathbf{d}_1 - \mathbf{v}_\lambda - \mathbf{v}_\mu\bigr)\bigr)^2 \tag{22}
+\min_{\mathbf{d}_1 \in \mathbb{R}^M}\ \mathbf{d}_1^{\top} C\,\bigl(\mathbf{p}_1 - \mathbf{1} p_0\bigr) + \bigl(\mathbf{p}_1 - \mathbf{1} p_0\bigr)^{\top} C\,\mathbf{d}_1 \;+\; \kappa\,\lambda_0^2\,\bigl(\mathbf{1}^{\top}\!\bigl(\delta t\,\mathbf{d}_1 - \mathbf{v}_\lambda - \mathbf{v}_\mu\bigr)\bigr)^2 \qquad (22)
 $$
 
 $$
-\underline{h}\,\mathbf{1} \leq \mathbf{h} \leq \bar{h}\,\mathbf{1}, \qquad \underline{d}_1\,\mathbf{1} \leq \mathbf{d}_1 \leq \bar{d}_1\,\mathbf{1} \tag{23b}
+\underline{h}\,\mathbf{1} \leq \mathbf{h} \leq \bar{h}\,\mathbf{1}, \qquad \underline{d}_1\,\mathbf{1} \leq \mathbf{d}_1 \leq \bar{d}_1\,\mathbf{1} \qquad (23b)
 $$
 
 The open loop takes $M = 241$ hourly samples over the full 10-day window
@@ -157,7 +157,7 @@ deterministic, the demand is the only stochastic input.
 periodic profile plus noise whose variance scales with the mean:
 
 $$
-d_i(t) = \bar{g}_i(t) + \varepsilon_i(t), \qquad \varepsilon_i(t) \sim \mathcal{N}\!\bigl(0,\ \sigma_i^2(\bar{g}_i(t))\bigr), \qquad \sigma_i(t) = 2\,\hat{\sigma}_i\,\frac{\bar{g}_i(t)}{\operatorname{mean}(\bar{g}_i)}, \tag{v2-2}
+d_i(t) = \bar{g}_i(t) + \varepsilon_i(t), \qquad \varepsilon_i(t) \sim \mathcal{N}\!\bigl(0,\ \sigma_i^2(\bar{g}_i(t))\bigr), \qquad \sigma_i(t) = 2\,\hat{\sigma}_i\,\frac{\bar{g}_i(t)}{\mathrm{mean}(\bar{g}_i)}, \qquad (v2-2)
 $$
 
 with $\hat{\sigma}_i$ the residual std of the Fourier fit of zone $i$.
@@ -168,7 +168,7 @@ Remark 1: the level error over one sample is $\lambda_0\,\delta t$ times the
 demand error, and the covariance is not propagated):
 
 $$
-\underline{h} + \sigma(h, t) \;\leq\; h(t) \;\leq\; \bar{h} - \sigma(h, t), \qquad \sigma(h, t) = \Phi^{-1}(\alpha_{ch})\,\lambda_0\,\delta t\,\sqrt{\sigma_\lambda^2(t) + \sigma_\mu^2(t)}, \tag{v2-13f,14}
+\underline{h} + \sigma(h, t) \;\leq\; h(t) \;\leq\; \bar{h} - \sigma(h, t), \qquad \sigma(h, t) = \Phi^{-1}(\alpha_{ch})\,\lambda_0\,\delta t\,\sqrt{\sigma_\lambda^2(t) + \sigma_\mu^2(t)}, \qquad (v2-13f,14)
 $$
 
 with $\alpha_{ch} = 0.95$ and $\Phi$ the standard Gaussian cdf.  The
@@ -182,7 +182,7 @@ controller's flow onto the set that keeps the next level within bounds,
 priority to the upper (overflow) bound:
 
 $$
-d_1^{LSC} = \Pi_{[\,\underline{u},\ \bar{u}\,]}\bigl(d_1^{GC}\bigr), \qquad \bar{u} = \bar{d}^{(1)} + \bar{d}^{(2)} + \frac{\bar{h} - h(t_0)}{\lambda_0\,\delta t}, \qquad \underline{u} = \bar{d}^{(1)} + \bar{d}^{(2)} + \frac{\underline{h} - h(t_0)}{\lambda_0\,\delta t}, \tag{v2-18,23}
+d_1^{LSC} = \Pi_{[\,\underline{u},\ \bar{u}\,]}\bigl(d_1^{GC}\bigr), \qquad \bar{u} = \bar{d}^{(1)} + \bar{d}^{(2)} + \frac{\bar{h} - h(t_0)}{\lambda_0\,\delta t}, \qquad \underline{u} = \bar{d}^{(1)} + \bar{d}^{(2)} + \frac{\underline{h} - h(t_0)}{\lambda_0\,\delta t}, \qquad (v2-18,23)
 $$
 
 then $d_1^{LSC}$ is further clipped to $[0, \bar{d}_1]$.  Simplifications
