@@ -104,24 +104,23 @@ $$
 0 \leq \underline{h} \leq h(t) \leq \bar{h}, \qquad 0 \leq d_1(t) \leq \bar{d}_1 \qquad (14d)
 $$
 
-Integrating (14b) over one sample gives the discrete dynamics used by the
-solver, with $v_\lambda(t_i)$ and $v_\mu(t_i)$ the demands of PZ1 and PZ2
-integrated over the sample:
+Integrating (14b) over one sample with $\Delta t = 1$ h gives the discrete
+dynamics used by the solver:
 
 $$
-h(t_i) = h(t_{i-1}) + \frac{\Delta t}{A} d_1(t_i) + \frac{1}{A} ( v_\lambda(t_i) - v_\mu(t_i) ), \qquad v_\lambda(t_i) = \int_{t_i-\Delta t}^{t_i} \frac{1}{\lambda_0} g_\lambda(\tau) d\tau \qquad (18)
+h(t_i) = h(t_{i-1}) + \frac{\Delta t}{A} \left( d_1(t_i) - \frac{1}{\lambda_0} g_\lambda(t_i) - g_\mu(t_i) \right) \qquad (18)
 $$
 
-and $v_\mu$ defined analogously from $g_\mu$.  Since
+Since
 
 $$
-h(t_0 + T) - h(t_0) = \lambda_0 \sum_{i=1}^{M} \left( \Delta t d_1(t_i) - v_\lambda(t_i) - v_\mu(t_i) \right) \qquad (21)
+h(t_0 + T) - h(t_0) = \frac{\Delta t}{A} \sum_{i=1}^{M} \left( d_1(t_i) - \frac{1}{\lambda_0} g_\lambda(t_i) - g_\mu(t_i) \right) \qquad (21)
 $$
 
 the discrete problem solved by `make_mpc` (via IPOPT) is
 
 $$
-\min_{d_1(t_1), \dots, d_1(t_M)} \sum_{i=1}^{M} \frac{2 c(t_i) ( p_1(t_i) - p_0 ) d_1(t_i)}{\eta} \Delta t + \kappa \lambda_0^2 \left( \sum_{i=1}^{M} ( \Delta t d_1(t_i) - v_\lambda(t_i) - v_\mu(t_i) ) \right)^2 \qquad (22)
+\min_{d_1(t_1), \dots, d_1(t_M)} \sum_{i=1}^{M} \frac{2 c(t_i) ( p_1(t_i) - p_0 ) d_1(t_i)}{\eta} \Delta t + \kappa \left( \frac{\Delta t}{A} \sum_{i=1}^{M} \left( d_1(t_i) - \frac{1}{\lambda_0} g_\lambda(t_i) - g_\mu(t_i) \right) \right)^2 \qquad (22)
 $$
 
 subject to
@@ -132,8 +131,7 @@ $$
 
 with $p_1(t_i)$ from (14c) and $h(t_i)$ from (18).  The open loop takes
 $M = 241$ hourly samples over the full 10-day window with the nominal Fourier
-demands as $v_\lambda$ and $v_\mu$, and anchors the terminal term at
-$h(t_0)$.
+demands $g_\lambda$ and $g_\mu$, and anchors the terminal term at $h(t_0)$.
 
 The stage cost as implemented is normalised to price times electrical power,
 $c(t_i) ( p_1(t_i) - p_0 ) d_1(t_i) k_p / \eta$ with $k_p$ the
