@@ -113,7 +113,7 @@ the tank balance itself is deterministic:
 $$
 \tilde d^{(i)}_k = \bar d^{(i)}_k + \sigma^{(i)}_k\,\varepsilon_k,
 \qquad
-\sigma^{(i)}_k = 2\,\hat\sigma_i\,\frac{\bar d^{(i)}_k}{\operatorname{mean}(\bar d^{(i)})},
+\sigma^{(i)}_k = 2\,\hat\sigma_i\,\frac{\bar d^{(i)}_k}{\mathrm{mean}(\bar d^{(i)})},
 \qquad \varepsilon_k \sim \mathcal N(0,1),
 $$
 
