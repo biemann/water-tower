@@ -252,3 +252,9 @@ with the min/max requirements on top, the price signal, the flows
 (`water_demand1` blue, `water_demand2` green, `pump_flow` red), and the supply
 pressure from (20)
 as the fourth panel, matching the pressure identification of Fig. 6.
+
+The figure of the current stochastic run — 24 h receding horizon, three
+seeds with mean-scaled demand noise, chance-constrained level bounds and
+the local safety controller:
+
+![Receding-horizon closed loop, seeds 1-3](kallesoe_trajectory_receding.png)
