@@ -2,9 +2,7 @@
 
 Unofficial implementation of the water-tower case study of
 
-> C. S. Kallesoe, A. K. Nilsson, H. Madsen et al., *Smart Water Software: The
-> Development of an Efficient Model Predictive Control System for Water
-> Distribution Networks*, IFAC-PapersOnLine 50-1 (2017) 6582–6587.
+Kallesøe, Carsten Skovmose, Tom Nørgaard Jensen, and Jan Dimon Bendtsen. "Plug-and-play model predictive control for water supply networks with storage." IFAC-PapersOnLine 50.1 (2017): 6582-6587.
 
 The open-loop run follows this 2017 paper (v1); the receding-horizon closed
 loop follows the v2 architecture of
