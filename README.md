@@ -51,12 +51,12 @@ numbers; the map is:
 | (8), (10) | Pressure-zone-1 demand (paper: `water_demand1 = g_lambda/lambda0`; here `g_lambda` is fitted directly in m3/h, see the units note under eq. (18)), truncated Fourier series, identified by least squares | `fit_models.py` -> `g_lambda` |
 | (11) | Pressure-zone-2 demand `water_demand2 = g_mu`, same Fourier structure | `fit_models.py` -> `g_mu` |
 | (12), (13) | reduced network `p1 - pn = f_theta(d1, t)`, five-term friction/head, NNLS identification | `fit_models.py` -> `f_theta` |
-| (2), (20) | `pn = alpha*(h + h0)`, `p1 = f_theta + alpha*h` | `make_friction`, MPC stage cost |
+| (2), (20) | `pn = alpha*(h + h0)`, `p1 = f_theta + alpha*h` | `friction`/`pressure_power`, MPC stage cost |
 | (14a) | economic cost, price x electrical power, plus `kappa` terminal term | `make_mpc` objective |
-| (14b), (18) | `h_k+1 = h_k + (dt/A)*(d1_k - water_demand1_k - water_demand2_k)` | `make_mpc`, `step_plant` |
+| (14b), (18) | `h_k+1 = h_k + (dt/A)*d1_k - (v_lambda_k + v_mu_k)/A`, the exact interval consumptions `v_lambda`, `v_mu` (antiderivative of the Fourier rate over `[t_k, t_k + dt]`); the plant steps the realized consumptions | `make_mpc` (`water_consumption1/2`), `eval_demand_model`, `step_plant` |
 | (14c) | `p1 = f_theta(d1, t) + alpha*h` | `make_mpc` |
 | (14d) | `h_min <= h <= h_max`, `0 <= d1 <= D1_MAX` | `opti.bounded` in `make_mpc` |
-| (15)-(17), (23c) | water-quality exchange, `0.5*sum(|d1 - water_demand1| + water_demand2)*24/steps >= V_WQ` (rate form, any horizon) | exchange constraint in `make_mpc` |
+| (15)-(17), (23c) | water-quality exchange, `0.5*sum(|dt*d1 - v_lambda| + v_mu)*24/(steps*dt) >= V_WQ` (exact volume form, any horizon) | exchange constraint in `make_mpc` |
 | v2 (2) | demand noise, std scaled with the mean demand | `realize_demand` |
 | v2 (13f), (14) | chance-constrained level bounds, naive one-step form of Remark 1 | `level_margin` in `make_mpc`/`solve_mpc` |
 | v2 Sec. 3.2 | local safety controller (flow projection, simplified) | `apply_safety` |
@@ -105,10 +105,13 @@ $$
 $$
 
 Integrating (14b) over one sample with $\Delta t = 1$ h gives the discrete
-dynamics used by the solver:
+dynamics used by the solver, with the demand entering as the exact interval
+consumptions of paper eq. (18) (`eval_demand_model` differences the
+antiderivative of the same Fourier series over $[t_{i-1}, t_i]$):
 
 $$
-h(t_i) = h(t_{i-1}) + \frac{\Delta t}{A} \left( d_1(t_i) - \frac{1}{\lambda_0} g_\lambda(t_i) - g_\mu(t_i) \right) \qquad (18)
+h(t_i) = h(t_{i-1}) + \frac{\Delta t}{A} d_1(t_i) - \frac{1}{A} \left( v_\lambda(t_i) + v_\mu(t_i) \right), \qquad
+v_\lambda(t_i) = \int_{t_{i-1}}^{t_i} \frac{1}{\lambda_0} g_\lambda(\tau) d\tau \qquad (18)
 $$
 
 **Units of `g_lambda`.**  (18) quotes the paper, whose $g_\lambda$ is *not* a
@@ -119,10 +122,12 @@ the paper just before eq. (12)); that is why (14b)/(18) carry the factor
 $1/\lambda_0$ on $g_\lambda$ while $g_\mu$ — fitted against the *measured
 flow* $d_{n+1}$ in (11) — appears without one.  `fit_models.py` instead fits
 both Fourier models by least squares directly against the digitised m3/h
-demand series, so the code's `g_lambda` already is the flow and the balance
-is implemented symmetrically, `h += dt/A * (d1 - water_demand1 -
-water_demand2)`, with the paper's $1/\lambda_0$ absorbed into the fitted
-coefficients ($\texttt{g\_lambda}_\mathrm{code} = g_\lambda/\lambda_0$).
+demand series, so the code's `g_lambda` already is the flow, with the paper's
+$1/\lambda_0$ absorbed into the fitted
+coefficients ($\texttt{g\_lambda}_\mathrm{code} = g_\lambda/\lambda_0$).  The
+same helper returns the interval consumption $v_\lambda$ as the exact
+antiderivative of that series over one sample, so the dynamics are symmetric
+in the two zones, `h += dt/A * d1 - (v_lambda + v_mu)/A`.
 
 Since
 
@@ -146,19 +151,22 @@ with $p_1(t_i)$ from (14c) and $h(t_i)$ from (18), plus the water-quality
 exchange constraint (17), repeated as (23c): the tower turnover
 
 $$
-\frac{24}{M\Delta t} \, \frac{1}{2} \sum_{i=1}^{M} \left( | d_1(t_i) - \bar d_1(t_i) | + \bar d_2(t_i) \right) \Delta t \;\geq\; V \qquad (17), (23c)
+\frac{24}{M\Delta t} \, \frac{1}{2} \sum_{i=1}^{M} \left( | \Delta t\, d_1(t_i) - v_\lambda(t_i) | + v_\mu(t_i) \right) \;\geq\; V \qquad (17), (23c)
 $$
 
 with the threshold $V = 100\,\mathrm{m^3/day}$ — an assumption, neither paper
-states $V$ (the WaterTower scripts use the same value).  The rate form keeps
-the threshold horizon-independent.  At this network's data the constraint is
+states $V$ (the WaterTower scripts use the same value).  The exact consumptions
+make (23c) hold without the paper's $\Delta t\, \bar d_1 \approx v_\lambda$
+approximation; the day-scaling keeps the threshold horizon-independent.  At
+this network's data the constraint is
 slack: over a periodic day the exchange measure cannot fall below the PZ2
 through-flow $\int \bar d_2 \approx 287\,\mathrm{m^3}$ (reached exactly by
 pure demand tracking, the constant-price optimum), and the solves realize
-$420$–$480\,\mathrm{m^3/day}$, so it guards against future cost/price
+$\approx 420\,\mathrm{m^3/day}$, so it guards against future cost/price
 configurations rather than shaping the solution shown.  The supply pressure
-$p_1$ and pump power of the cost and the post-solve diagnostics come from one
-shared `pressure_power` Function (`make_pressure_power`), so eq. (2)/(20) and
+$p_1$ and pump power of the cost and the post-solve diagnostics come from the
+one pure function `pressure_power` (which composes `friction`), so eq.
+(2)/(20) and
 the power conversion exist in a single place.  The open loop takes
 $M = 241$ hourly samples over the full 10-day window with the nominal Fourier
 demands $g_\lambda$ and $g_\mu$, and anchors the terminal term at $h(t_0)$.
@@ -182,7 +190,10 @@ $$
 d_i(t) = \bar{g}_i(t) + \varepsilon_i(t), \qquad \varepsilon_i(t) \sim \mathcal{N} \left( 0, \sigma_i^2(\bar{g}_i(t)) \right), \qquad \sigma_i(t) = 2 \hat{\sigma}_i \frac{\bar{g}_i(t)}{\mathrm{mean}(\bar{g}_i)} \qquad (v2-2)
 $$
 
-with $\hat{\sigma}_i$ the residual std of the Fourier fit of zone $i$.
+with $\hat{\sigma}_i$ the residual std of the Fourier fit of zone $i$.  The
+plant integrates the realized consumption over the sample, i.e. the exact
+interval consumption $v_i$ of the forecast profile plus the same noise held
+piecewise constant: $v_i^{realized}(t_k) = v_i(t_k) + \Delta t\, \varepsilon_i(t_k)$.
 
 **Chance-constrained EMPC** (v2 eq. 13f/14) — the level constraints are
 tightened by the one-step-ahead level uncertainty (the naive form of
@@ -201,11 +212,11 @@ controller's flow onto the set that keeps the next level within bounds,
 priority to the upper (overflow) bound:
 
 $$
-d_1^{LSC} = \Pi_{\left[ \underline{u}, \bar{u} \right]} \left( d_1^{GC} \right), \qquad \bar{u} = \bar{d}^{(1)} + \bar{d}^{(2)} + \frac{\bar{h} - h(t_0)}{\lambda_0 \Delta t}, \qquad \underline{u} = \bar{d}^{(1)} + \bar{d}^{(2)} + \frac{\underline{h} - h(t_0)}{\lambda_0 \Delta t} \qquad (v2-18,23)
+d_1^{LSC} = \Pi_{\left[ \underline{u}, \bar{u} \right]} \left( d_1^{GC} \right), \qquad \bar{u} = \frac{\bar{v}^{(1)} + \bar{v}^{(2)}}{\Delta t} + \frac{\bar{h} - h(t_0)}{\lambda_0 \Delta t}, \qquad \underline{u} = \frac{\bar{v}^{(1)} + \bar{v}^{(2)}}{\Delta t} + \frac{\underline{h} - h(t_0)}{\lambda_0 \Delta t} \qquad (v2-18,23)
 $$
 
 then $d_1^{LSC}$ is clipped to $[0, \bar{d}_1]$.  The LSC runs hourly and uses
-the forecast demand in place of the paper's Kalman-filter estimate.  The
+the forecast consumption in place of the paper's Kalman-filter estimate.  The
 plant is never clipped — any residual violation is realized noise the hourly
 safety layer cannot see and is reported per seed.
 
