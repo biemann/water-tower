@@ -40,11 +40,11 @@ TIME_STEP = 1.0
 AREA = 400.0                                          # lambda0 = 1/area, eq. (9)
 LEVEL_PRESSURE_COEF = 0.1                             # alpha, eq. (2)
 TOWER_HEIGHT = 30.0                                   # h0, eq. (2)
-PRESSURE_BEFORE_PUMP = 2.408049                              # p0, eq. (14a)
+PRESSURE_BEFORE_PUMP = 2.408049                       # p0, eq. (14a)
 KAPPA = 0.062893                                      # terminal weight, eq. (14a)
 UNIT_CONVERSION = 0.02778                             # bar*m3/h -> kW
 PUMP_EFFICIENCY = 0.65                                # eta, eq. (14a)
-V_WQ = 100.0                                          # water-quality exchange threshold of (17), (23c)
+WATER_QUALITY = 100.0                                 # water-quality exchange threshold of (17), (23c)
 
 DEMAND_PERIOD_H = 24.0
 START_HOUR, END_HOUR = 0.0, 240.0                     # day 0 -> day 10
@@ -118,7 +118,7 @@ def load_case():
 
 
 def pressure_drop(theta, flow, water_demand1):
-    # friction/head model f_theta of eq. (12) - represents pressure drop from the pump to the bottom of thetower
+    # friction/head model f_theta of eq. (12) - represents pressure drop from the pump to the bottom of the tower
     abs_flow = ca.sqrt(flow * flow + 1e-5)
     deviation = ca.sqrt((flow - water_demand1) * (flow - water_demand1) + 1e-5)
     pressure_drop = (theta['th1'] * abs_flow * flow
@@ -143,10 +143,9 @@ def make_mpc(theta, steps, flow_max):
     opti = ca.Opti()
     flow = opti.variable(steps)                 # d1 control action
     water_level = opti.variable(steps + 1)      # h state
-    water_level_now = opti.parameter()
-    level_reference = opti.parameter()          # periodicity constraint, (14a)
-    water_demand1 = opti.parameter(steps)       # d_bar1 in m3/h: instantaneous rate, fitted g_lambda/lambda_0 (8)/(10)
-    water_demand2 = opti.parameter(steps)       # instantaneous rate g_mu, (9)/(11)
+    water_level_now = opti.parameter()          # h(t0): receding initialisation and terminal anchor of (14a)
+    water_demand1 = opti.parameter(steps)       # d_bar fitted g_lambda/lambda_0 (8)/(10)
+    water_demand2 = opti.parameter(steps)       # d_{n+1} fitted g_mu, (9)/(11)
     water_consumption1 = opti.parameter(steps)  # v_lambda of (18): water consumed in PZ1 over one interval, m3
     water_consumption2 = opti.parameter(steps)  # v_mu of (18)
     price = opti.parameter(steps)               # c(tau), (14a)
@@ -154,50 +153,39 @@ def make_mpc(theta, steps, flow_max):
 
     opti.subject_to(water_level[0] == water_level_now)                            # receding horizon initialisation
     opti.subject_to(opti.bounded(WATER_LEVEL_MIN + level_margin, water_level[1:],
-                                 WATER_LEVEL_MAX - level_margin))
-    opti.subject_to(opti.bounded(0.0, flow, flow_max))                            # (14d)
+                                 WATER_LEVEL_MAX - level_margin))                   # (14d)/(23b)
+    opti.subject_to(opti.bounded(0.0, flow, flow_max))                              # (14d)/(23b)
 
     cost = ca.MX(0)
     for k in range(steps):
-        # (18): forward Euler of (14b) 
         opti.subject_to(water_level[k + 1] == water_level[k]
                         + (TIME_STEP / AREA) * flow[k]
-                        - (water_consumption1[k] + water_consumption2[k]) / AREA)
-        _, power_k = pump_power(theta, flow[k], water_demand1[k], water_level[k + 1])
-        cost += price[k] * power_k + 1e-6 * flow[k] * flow[k]             # (14a) + small regularization
-    cost += KAPPA * (water_level[steps] - level_reference) ** 2                   # (14a) terminal term
-    # (17), (23c): water quality -- the daily exchange through the tower, half
-    # of (in + out), must reach V; exact volume form of (23c) over the
-    # consumptions, scaled to one day so V_WQ applies at any horizon
+                        - (water_consumption1[k] + water_consumption2[k]) / AREA)       # (14b)/(19)
+        _, power_k = pump_power(theta, flow[k], water_demand1[k], water_level[k + 1])   # (14c)/(20)*flow
+        cost += price[k] * power_k                                                      # (14a)/(23a) running cost
+    cost += KAPPA * (water_level[steps] - water_level_now) ** 2                          # (14a)/(23a) terminal cost
     exchange = 0.5 * ca.sum1(ca.fabs(TIME_STEP * flow - water_consumption1)
-                             + water_consumption2) \
-        * DEMAND_PERIOD_H / (steps * TIME_STEP)
-    opti.subject_to(exchange >= V_WQ)
+                             + water_consumption2) * DEMAND_PERIOD_H / (steps * TIME_STEP)
+    opti.subject_to(exchange >= WATER_QUALITY)
     opti.minimize(cost)
     opti.solver('ipopt', {'ipopt.print_level': 0, 'ipopt.sb': 'yes',
                           'print_time': 0, 'show_eval_warnings': False})
     return {'opti': opti, 'flow': flow, 'water_level': water_level,
-            'water_level_now': water_level_now, 'level_reference': level_reference,
+            'water_level_now': water_level_now,
             'water_demand1': water_demand1, 'water_demand2': water_demand2,
             'water_consumption1': water_consumption1, 'water_consumption2': water_consumption2,
             'price': price, 'level_margin': level_margin}
 
 
 def solve_mpc(mpc, water_level_now, water_demand1, water_demand2, price,
-              level_reference=None, level_margin=None,
+              level_margin=None,
               water_consumption1=None, water_consumption2=None):
-    # level_reference defaults to the current level: over a 24 h horizon that
-    # is the periodic steady-state target (same hour next day); level_margin
-    # defaults to zero (v1 deterministic bounds)
-    if water_consumption1 is None or water_consumption2 is None:
-        raise ValueError('water_consumption1/water_consumption2 are required: '
-                         'the level dynamics (18) and the exchange (23c) '
-                         'consume the exact interval consumptions, see '
-                         'water_consumption()')
+    # water_level_now anchors both the initial level and the terminal
+    # periodicity target h(t0) of (14a); level_margin defaults to zero (v1
+    # deterministic bounds)
+
     opti = mpc['opti']
     opti.set_value(mpc['water_level_now'], water_level_now)
-    opti.set_value(mpc['level_reference'],
-                   water_level_now if level_reference is None else level_reference)
     opti.set_value(mpc['water_demand1'], water_demand1)
     opti.set_value(mpc['water_demand2'], water_demand2)
     opti.set_value(mpc['price'], price)
@@ -212,11 +200,9 @@ def solve_mpc(mpc, water_level_now, water_demand1, water_demand2, price,
     return flows, water_levels
 
 
-def step_plant(water_level, flow, water_consumption1, water_consumption2):
-    # plant-side (18): exact interval consumptions, the same integral model
-    # the controller plans with
-    return water_level + (TIME_STEP / AREA) * flow \
-        - (water_consumption1 + water_consumption2) / AREA
+def step_env(water_level, flow, water_consumption1, water_consumption2):
+    # env-side (18): the same model the controller plans with
+    return water_level + (TIME_STEP / AREA) * flow - (water_consumption1 + water_consumption2) / AREA
 
 
 def realize_demand(case, seed):
@@ -261,7 +247,6 @@ def run_open_loop(case, theta):
     flows, water_levels = solve_mpc(mpc, case['water_level_start'],
                                     case['water_demand1_forecast'], case['water_demand2_forecast'],
                                     case['price'],
-                                    level_reference=case['water_level_start'],
                                     water_consumption1=case['water_consumption1_forecast'],
                                     water_consumption2=case['water_consumption2_forecast'])
     # p1 of eq. (2)/(20) and the power of (14a), evaluated at the solved
@@ -276,7 +261,7 @@ def run_open_loop(case, theta):
 def run_receding_horizon(case, theta, seed, chance_constraints=True):
     # closed loop architecture: forecast -> solve_mpc (global controller,
     # chance-constrained unless disabled) -> safety projection (local
-    # controller) -> step_plant, the plant driven by the realized demand
+    # controller) -> step_env, the environment driven by the realized demand
     water_demand1_realized, water_demand2_realized, \
         water_consumption1_realized, water_consumption2_realized, std1, std2 = \
         realize_demand(case, seed)
@@ -312,7 +297,7 @@ def run_receding_horizon(case, theta, seed, chance_constraints=True):
                                         case['flow_max'])
         interventions += intervened
 
-        water_level = step_plant(water_level, flow,
+        water_level = step_env(water_level, flow,
                                  water_consumption1_realized[k],
                                  water_consumption2_realized[k])
         pressure, power_k = pump_power(theta, flow, water_demand1_realized[k], water_level)
