@@ -20,31 +20,37 @@ and every output written next to the script.
 ## Run
 
 ```sh
-python fit_models.py                   # identify g_lambda, g_mu, f_theta -> data/model.json
-python kallesoe_mpc.py    # open-loop economic MPC (v1) + figure
-python kallesoe_mpc.py --receding        # 24 h receding-horizon closed loop (v2),
-                                                      # 3 stochastic realizations overlaid
+python fit_models.py                            # identify g_lambda, g_mu, f_theta -> data/model.json
+python kallesoe_mpc.py                          # open-loop economic MPC (v1) + figure
+python kallesoe_mpc.py --receding               # 24 h receding-horizon closed loop (v2),
+                                                # 3 stochastic realizations overlaid
 python kallesoe_mpc.py --receding --no-chance   # ablation: v1 deterministic bounds
 python kallesoe_mpc.py --receding --seeds 4 5   # custom noise seeds (default: 1 2 3)
-python kallesoe_mpc.py --no-plot         # skip the figure
+python kallesoe_mpc.py --v-exact                # eq. (18) exact interval integrals
+python kallesoe_mpc.py --kappa-ramp 0.003       # v2 (13a) control-ramp cost, default 0
+python kallesoe_mpc.py --no-plot                # skip the figure
 ```
 
 Dependencies: `numpy`, `scipy`, `casadi` (with IPOPT), `matplotlib` (figure).
+A `requirements.txt` pins the versions the loop runs on.
 
 `fit_models.py` identifies both demand models and the friction model from the
 digitised series and writes every fitted parameter to `data/model.json`,
 which the run script loads.  A fitted `data/model.json` ships with the
-folder, so fitting is only needed if you change the data or the fit.
-The `f_theta` fit regresses `p1 - pn` with `pn = alpha*(h + h0)` evaluated
-at the digitised level, per eq. (2), (12), (13); it reproduces the digitised
-supply pressure to 0.07 bar RMSE.
+folder, so fitting is only needed if you change the data or the fit.  The
+shipped file pairs the 12-harmonic demand fit with the friction weights of
+the canonical Kallesoe refit (`th1 = 2.8e-5`, `th3 = 6.2e-5`, `th5 = 0.515`),
+the set the WaterTower IOC studies freeze for this network.  Rerunning
+`fit_models.py` refits the friction from the digitised series by NNLS instead
+(`th5 = 0.336`, 0.070 bar RMSE); the demand fit RMSE is 1.15 m3/h for zone 1
+and 0.34 for zone 2.
 
 ## Model and its equations
 
 The reduced network has one pump station (supply flow `d1`), one elevated
 reservoir (level `h`, area `A = 400 m2`) and two pressure zones whose demands
-are `water_demand1` (pressure zone 1) and `water_demand2` (pressure zone 2).  The code comments carry the equation
-numbers; the map is:
+are `water_demand1` (pressure zone 1) and `water_demand2` (pressure zone 2).
+The code comments carry the equation numbers; the map is:
 
 | Paper | What | Where |
 | --- | --- | --- |
@@ -53,24 +59,23 @@ numbers; the map is:
 | (12), (13) | reduced network `p1 - pn = f_theta(d1, t)`, five-term friction/head, NNLS identification | `fit_models.py` -> `f_theta` |
 | (2), (20) | `pn = alpha*(h + h0)`, `p1 = f_theta + alpha*h` | `friction`/`pressure_power`, MPC stage cost |
 | (14a) | economic cost, price x electrical power, plus `kappa` terminal term | `make_mpc` objective |
-| (14b), (18) | `h_k+1 = h_k + (dt/A)*d1_k - (v_lambda_k + v_mu_k)/A`, the exact interval consumptions `v_lambda`, `v_mu` (antiderivative of the Fourier rate over `[t_k, t_k + dt]`); the plant steps the realized consumptions | `make_mpc` (`water_consumption1/2`), `eval_demand_model`, `step_plant` |
+| (14b), (18) | `h_k+1 = h_k + (dt/A)*d1_k - (v_lambda_k + v_mu_k)/A`; the interval consumptions `v_lambda`, `v_mu` default to the eq. (23c) stand-in `dt*g(t_k)`, `--v-exact` integrates the Fourier rate over `[t_k, t_k + dt]`; the plant steps the realized consumptions | `make_mpc` (`water_consumption1/2`), `eval_demand_model`, `step_plant` |
 | (14c) | `p1 = f_theta(d1, t) + alpha*h` | `make_mpc` |
 | (14d) | `h_min <= h <= h_max`, `0 <= d1 <= D1_MAX` | `opti.bounded` in `make_mpc` |
 | (15)-(17), (23c) | water-quality exchange, `0.5*sum(|dt*d1 - v_lambda| + v_mu)*24/(steps*dt) >= WATER_QUALITY` (exact volume form, any horizon) | exchange constraint in `make_mpc` |
 | v2 (2) | demand noise, std scaled with the mean demand | `realize_demand` |
 | v2 (13f), (14) | chance-constrained level bounds, naive one-step form of Remark 1 | `level_margin` in `make_mpc`/`solve_mpc` |
 | v2 Sec. 3.2 | local safety controller (flow projection, simplified) | `apply_safety` |
+| v2 (13a) | control-ramp cost `kappa_ramp * sum (d1_k - d1_k-1)^2`, off by default, `--kappa-ramp` to switch on | `make_mpc` |
 
 Fixed physics and identified constants: `alpha = 0.1`, `h0 = 30 m`,
 `p0 = 2.408 bar`, `eta = 0.65`, `kappa = 0.0629`, and the water-quality
-exchange threshold `WATER_QUALITY = 100` m3/day (assumed, see (17)/(23c) below).  `D1_MAX` is derived from
-the data as max(observed `d1`) + 20 m3/h (with the day-0 start this includes
-the on/off startup spike, so the bound is generous; the MPC itself never
-exceeds ~80 m3/h) and the initial level is the digitised level at hour 0.
-The default Fourier order is 12 harmonics (`--harmonics N` to change); the
-fit RMSE against the digitised demand is 1.15 m3/h (zone 1) and 0.34 (zone 2),
-and the friction fit recovers th1 = 4.8e-5, th3 = 4.1e-5, th5 = 0.336 at
-0.070 bar RMSE.
+exchange threshold `WATER_QUALITY = 100` m3/day (assumed, see (17)/(23c)
+below).  `D1_MAX` is derived from the data as max(observed `d1`) + 20 m3/h
+(with the day-0 start this includes the on/off startup spike, so the bound is
+generous; the MPC itself never exceeds ~80 m3/h) and the initial level is the
+digitised level at hour 0.  The default Fourier order is 12 harmonics
+(`--harmonics N` to change).
 
 ## MPC formulation
 
@@ -105,9 +110,12 @@ $$
 $$
 
 Integrating (14b) over one sample with $\Delta t = 1$ h gives the discrete
-dynamics used by the solver, with the demand entering as the exact interval
-consumptions of paper eq. (18) (`eval_demand_model` differences the
-antiderivative of the same Fourier series over $[t_{i-1}, t_i]$):
+dynamics used by the solver.  By default the demand enters as the sampled
+stand-in of paper eq. (23c), $v_i = \Delta t\, g(t_i)$, which is the
+convention the recorded reproduction runs use.  With `--v-exact` the
+consumption is instead the exact interval integral of paper eq. (18)
+(`eval_demand_model` differences the antiderivative of the same Fourier
+series over $[t_{i-1}, t_i]$):
 
 $$
 h(t_i) = h(t_{i-1}) + \frac{\Delta t}{A} d_1(t_i) - \frac{1}{A} \left( v_\lambda(t_i) + v_\mu(t_i) \right), \qquad
@@ -119,15 +127,14 @@ flow: the paper identifies it from pressure samples via (9)-(10) (linear in
 $(\lambda_0, \lambda)$), so it carries units of level rate, and the user
 demand is $\bar d = A\, g_\lambda = \frac{1}{\lambda_0} g_\lambda$ (stated in
 the paper just before eq. (12)); that is why (14b)/(18) carry the factor
-$1/\lambda_0$ on $g_\lambda$ while $g_\mu$ — fitted against the *measured
-flow* $d_{n+1}$ in (11) — appears without one.  `fit_models.py` instead fits
+$1/\lambda_0$ on $g_\lambda$ while $g_\mu$, fitted against the *measured
+flow* $d_{n+1}$ in (11), appears without one.  `fit_models.py` instead fits
 both Fourier models by least squares directly against the digitised m3/h
 demand series, so the code's `g_lambda` already is the flow, with the paper's
 $1/\lambda_0$ absorbed into the fitted
-coefficients ($\texttt{g\_lambda}_\mathrm{code} = g_\lambda/\lambda_0$).  The
-same helper returns the interval consumption $v_\lambda$ as the exact
-antiderivative of that series over one sample, so the dynamics are symmetric
-in the two zones, `h += dt/A * d1 - (v_lambda + v_mu)/A`.
+coefficients ($\texttt{g\_lambda}_\mathrm{code} = g_\lambda/\lambda_0$).
+The same helper returns the interval consumption $v_\lambda$, so the dynamics
+are symmetric in the two zones, `h += dt/A * d1 - (v_lambda + v_mu)/A`.
 
 Since
 
@@ -154,28 +161,26 @@ $$
 \frac{24}{M\Delta t} \, \frac{1}{2} \sum_{i=1}^{M} \left( | \Delta t\, d_1(t_i) - v_\lambda(t_i) | + v_\mu(t_i) \right) \;\geq\; V \qquad (17), (23c)
 $$
 
-with the threshold $V = 100\,\mathrm{m^3/day}$ — an assumption, neither paper
-states $V$ (the WaterTower scripts use the same value).  The exact consumptions
-make (23c) hold without the paper's $\Delta t\, \bar d_1 \approx v_\lambda$
-approximation; the day-scaling keeps the threshold horizon-independent.  At
-this network's data the constraint is
-slack: over a periodic day the exchange measure cannot fall below the PZ2
-through-flow $\int \bar d_2 \approx 287\,\mathrm{m^3}$ (reached exactly by
-pure demand tracking, the constant-price optimum), and the solves realize
-$\approx 420\,\mathrm{m^3/day}$, so it guards against future cost/price
-configurations rather than shaping the solution shown.  The supply pressure
-$p_1$ and pump power of the cost and the post-solve diagnostics come from the
-one pure function `pressure_power` (which composes `friction`), so eq.
-(2)/(20) and
-the power conversion exist in a single place.  The open loop takes
-$M = 241$ hourly samples over the full 10-day window with the nominal Fourier
-demands $g_\lambda$ and $g_\mu$, and anchors the terminal term at $h(t_0)$.
+with the threshold $V = 100\,\mathrm{m^3/day}$.  This is an assumption;
+neither paper states $V$ (the WaterTower scripts use the same value).  The
+day-scaling keeps the threshold horizon-independent.  At this network's data
+the constraint is slack: over a periodic day the exchange measure cannot fall
+below the PZ2 through-flow $\int \bar d_2 \approx 287\,\mathrm{m^3}$ (reached
+exactly by pure demand tracking, the constant-price optimum), and the solves
+realize $\approx 420\,\mathrm{m^3/day}$, so it guards against future
+cost/price configurations rather than shaping the solution shown.  The supply
+pressure $p_1$ and pump power of the cost and the post-solve diagnostics come
+from the one pure function `pressure_power` (which composes `friction`), so
+eq. (2)/(20) and the power conversion exist in a single place.  The open loop
+takes $M = 241$ hourly samples over the full 10-day window with the nominal
+Fourier demands $g_\lambda$ and $g_\mu$, and anchors the terminal term at
+$h(t_0)$.
 
 The stage cost as implemented is normalised to price times electrical power,
 $c(t_i) ( p_1(t_i) - p_0 ) d_1(t_i) k_p / \eta$ with $k_p$ the
 $\mathrm{bar \cdot m^3/h}$ to kW conversion, i.e. the factor 2 of (14a) is
-absorbed.  The terminal term is anchored at the current level $h(t_0)$ — the
-paper's periodicity target $\kappa ( h(t_0+T) - h(t_0) )^2$ — so the solver
+absorbed.  The terminal term is anchored at the current level $h(t_0)$, the
+paper's periodicity target $\kappa ( h(t_0+T) - h(t_0) )^2$, so the solver
 needs no extra flow regulariser: the open-loop optimum is unique (verified
 from flat initial guesses of 30 and 70 m3/h).
 
@@ -186,7 +191,7 @@ applies the first flow, and steps the plant with the realized demand.
 Three layers, matching the v2 architecture; the plant itself is
 deterministic, the demand is the only stochastic input.
 
-**Stochastic demand** (v2 eq. 2) — the consumption in zone $i$ is the mean
+**Stochastic demand** (v2 eq. 2).  The consumption in zone $i$ is the mean
 periodic profile plus noise whose variance scales with the mean:
 
 $$
@@ -194,11 +199,11 @@ d_i(t) = \bar{g}_i(t) + \varepsilon_i(t), \qquad \varepsilon_i(t) \sim \mathcal{
 $$
 
 with $\hat{\sigma}_i$ the residual std of the Fourier fit of zone $i$.  The
-plant integrates the realized consumption over the sample, i.e. the exact
-interval consumption $v_i$ of the forecast profile plus the same noise held
+plant integrates the realized consumption over the sample, i.e. the interval
+consumption $v_i$ of the forecast profile plus the same noise held
 piecewise constant: $v_i^{realized}(t_k) = v_i(t_k) + \Delta t\, \varepsilon_i(t_k)$.
 
-**Chance-constrained EMPC** (v2 eq. 13f/14) — the level constraints are
+**Chance-constrained EMPC** (v2 eq. 13f/14).  The level constraints are
 tightened by the one-step-ahead level uncertainty (the naive form of
 Remark 1: the level error over one sample is $\lambda_0 \Delta t$ times the
 demand error, and the covariance is not propagated):
@@ -210,9 +215,9 @@ $$
 with $\alpha_{ch} = 0.95$ and $\Phi$ the standard Gaussian cdf.  Disable the
 tightening with `--no-chance` to recover the v1 deterministic bounds (14d).
 
-**Local safety controller** (v2 Sec. 3.2, simplified) — projects the global
-controller's flow onto the set that keeps the next level within bounds,
-priority to the upper (overflow) bound:
+**Local safety controller** (v2 Sec. 3.2, simplified).  This projects the
+global controller's flow onto the set that keeps the next level within
+bounds, priority to the upper (overflow) bound:
 
 $$
 d_1^{LSC} = \Pi_{\left[ \underline{u}, \bar{u} \right]} \left( d_1^{GC} \right), \qquad \bar{u} = \frac{\bar{v}^{(1)} + \bar{v}^{(2)}}{\Delta t} + \frac{\bar{h} - h(t_0)}{\lambda_0 \Delta t}, \qquad \underline{u} = \frac{\bar{v}^{(1)} + \bar{v}^{(2)}}{\Delta t} + \frac{\underline{h} - h(t_0)}{\lambda_0 \Delta t} \qquad (v2-18,23)
@@ -220,7 +225,7 @@ $$
 
 then $d_1^{LSC}$ is clipped to $[0, \bar{d}_1]$.  The LSC runs hourly and uses
 the forecast consumption in place of the paper's Kalman-filter estimate.  The
-plant is never clipped — any residual violation is realized noise the hourly
+plant is never clipped.  Any residual violation is realized noise the hourly
 safety layer cannot see and is reported per seed.
 
 ## The experiment (paper Sec. 4.1, Fig. 7)
@@ -230,7 +235,7 @@ takes over.  The open-loop run reproduces the v1 controlled phase directly;
 the receding run reproduces it with the v2 closed loop described above:
 at every hourly step the chance-constrained economic MPC solves (14) over a
 24 h horizon from the measured level, the safety layer projects the first
-control `d1(t0)`, and the plant advances with the *realized* demand — the
+control `d1(t0)`, and the plant advances with the *realized* demand, the
 nominal forecast (8), (11) plus mean-scaled white noise (v2 eq. 2) at twice
 the fit residual (about 1.4 m3/h for `water_demand1`, 0.4 for
 `water_demand2` at the mean demand, i.e. about 7%); the measured residual
@@ -244,7 +249,7 @@ signal (Fig. 7, middle): high by day, low at night.
 | File | Content |
 | --- | --- |
 | `data/kallesoe_hourly.csv` | Digitised hourly series of Figs. 6-7 of the paper: reservoir level, price, `water_demand1`, `water_demand2`, `d1`, supply pressure (241 h) |
-| `data/model.json` | All fitted parameters: `g_lambda`, `g_mu` Fourier coefficients per eq. (8)/(11) and the `f_theta` weights per eq. (12)/(13), written by `fit_models.py` |
+| `data/model.json` | All fitted parameters: `g_lambda`, `g_mu` Fourier coefficients per eq. (8)/(11) and the `f_theta` weights per eq. (12)/(13) |
 
 ## Output
 
@@ -265,7 +270,7 @@ with the min/max requirements on top, the price signal, the flows
 pressure from (20)
 as the fourth panel, matching the pressure identification of Fig. 6.
 
-The figure of the current stochastic run — 24 h receding horizon, three
+The figure of the current stochastic run, with 24 h receding horizon, three
 seeds with mean-scaled demand noise, chance-constrained level bounds and
 the local safety controller:
 
