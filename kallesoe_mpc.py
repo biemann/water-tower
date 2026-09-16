@@ -41,7 +41,7 @@ AREA = 400.0                                          # lambda0 = 1/area, eq. (9
 LEVEL_PRESSURE_COEF = 0.1                             # alpha, eq. (2)
 TOWER_HEIGHT = 30.0                                   # h0, eq. (2)
 PRESSURE_BEFORE_PUMP = 2.408049                       # p0, eq. (14a)
-KAPPA = 0.0                                           # terminal weight, eq. (14a)
+KAPPA = 0.062893                                      # terminal weight, eq. (14a)
 UNIT_CONVERSION = 0.02778                             # bar*m3/h -> kW
 PUMP_EFFICIENCY = 0.65                                # eta, eq. (14a)
 WATER_QUALITY = 100.0                                 # water-quality exchange threshold of (17), (23c)

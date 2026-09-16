@@ -62,7 +62,7 @@ numbers; the map is:
 | v2 Sec. 3.2 | local safety controller (flow projection, simplified) | `apply_safety` |
 
 Fixed physics and identified constants: `alpha = 0.1`, `h0 = 30 m`,
-`p0 = 2.408 bar`, `eta = 0.65`, `kappa = 0`, and the water-quality
+`p0 = 2.408 bar`, `eta = 0.65`, `kappa = 0.0629`, and the water-quality
 exchange threshold `WATER_QUALITY = 100` m3/day (assumed, see (17)/(23c) below).  `D1_MAX` is derived from
 the data as max(observed `d1`) + 20 m3/h (with the day-0 start this includes
 the on/off startup spike, so the bound is generous; the MPC itself never
