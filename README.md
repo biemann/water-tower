@@ -56,14 +56,14 @@ numbers; the map is:
 | (14b), (18) | `h_k+1 = h_k + (dt/A)*d1_k - (v_lambda_k + v_mu_k)/A`, the exact interval consumptions `v_lambda`, `v_mu` (antiderivative of the Fourier rate over `[t_k, t_k + dt]`); the plant steps the realized consumptions | `make_mpc` (`water_consumption1/2`), `eval_demand_model`, `step_plant` |
 | (14c) | `p1 = f_theta(d1, t) + alpha*h` | `make_mpc` |
 | (14d) | `h_min <= h <= h_max`, `0 <= d1 <= D1_MAX` | `opti.bounded` in `make_mpc` |
-| (15)-(17), (23c) | water-quality exchange, `0.5*sum(|dt*d1 - v_lambda| + v_mu)*24/(steps*dt) >= V_WQ` (exact volume form, any horizon) | exchange constraint in `make_mpc` |
+| (15)-(17), (23c) | water-quality exchange, `0.5*sum(|dt*d1 - v_lambda| + v_mu)*24/(steps*dt) >= WATER_QUALITY` (exact volume form, any horizon) | exchange constraint in `make_mpc` |
 | v2 (2) | demand noise, std scaled with the mean demand | `realize_demand` |
 | v2 (13f), (14) | chance-constrained level bounds, naive one-step form of Remark 1 | `level_margin` in `make_mpc`/`solve_mpc` |
 | v2 Sec. 3.2 | local safety controller (flow projection, simplified) | `apply_safety` |
 
 Fixed physics and identified constants: `alpha = 0.1`, `h0 = 30 m`,
-`p0 = 2.408 bar`, `eta = 0.65`, `kappa = 0.0629`, and the water-quality
-exchange threshold `V_WQ = 100` m3/day (assumed, see (17)/(23c) below).  `D1_MAX` is derived from
+`p0 = 2.408 bar`, `eta = 0.65`, `kappa = 0`, and the water-quality
+exchange threshold `WATER_QUALITY = 100` m3/day (assumed, see (17)/(23c) below).  `D1_MAX` is derived from
 the data as max(observed `d1`) + 20 m3/h (with the day-0 start this includes
 the on/off startup spike, so the bound is generous; the MPC itself never
 exceeds ~80 m3/h) and the initial level is the digitised level at hour 0.
@@ -174,7 +174,10 @@ demands $g_\lambda$ and $g_\mu$, and anchors the terminal term at $h(t_0)$.
 The stage cost as implemented is normalised to price times electrical power,
 $c(t_i) ( p_1(t_i) - p_0 ) d_1(t_i) k_p / \eta$ with $k_p$ the
 $\mathrm{bar \cdot m^3/h}$ to kW conversion, i.e. the factor 2 of (14a) is
-absorbed; a small $10^{-6} d_1(t_i)^2$ regulariser keeps the solution unique.
+absorbed.  The terminal term is anchored at the current level $h(t_0)$ — the
+paper's periodicity target $\kappa ( h(t_0+T) - h(t_0) )^2$ — so the solver
+needs no extra flow regulariser: the open-loop optimum is unique (verified
+from flat initial guesses of 30 and 70 m3/h).
 
 ### Closed loop (v2, IFAC-PapersOnLine 56-2, 2023)
 
