@@ -42,6 +42,7 @@ LEVEL_PRESSURE_COEF = 0.1                             # alpha, eq. (2)
 TOWER_HEIGHT = 30.0                                   # h0, eq. (2)
 PRESSURE_BEFORE_PUMP = 2.408049                       # p0, eq. (14a)
 KAPPA = 0.062893                                      # terminal weight, eq. (14a)
+KAPPA_RAMP = 0.0                                      # v2 (13a) control-ramp weight
 UNIT_CONVERSION = 0.02778                             # bar*m3/h -> kW
 PUMP_EFFICIENCY = 0.65                                # eta, eq. (14a)
 WATER_QUALITY = 100.0                                 # water-quality exchange threshold of (17), (23c)
@@ -137,7 +138,7 @@ def pump_power(theta, flow, water_demand1, water_level):
     return pressure_after_pump, pump_power
 
 
-def make_mpc(theta, steps, flow_max):
+def make_mpc(theta, steps, flow_max, kappa_ramp=KAPPA_RAMP):
     # paper eq. (22): discrete-time form of (14) -- cost (14a), dynamics
     # (14b), pressure (14c), bounds (14d), over delta-t steps
     opti = ca.Opti()
@@ -163,6 +164,8 @@ def make_mpc(theta, steps, flow_max):
                         - (water_consumption1[k] + water_consumption2[k]) / AREA)       # (14b)/(19)
         _, power_k = pump_power(theta, flow[k], water_demand1[k], water_level[k + 1])   # (14c)/(20)*flow
         cost += price[k] * power_k                                                      # (14a)/(23a) running cost
+    if kappa_ramp:
+        cost += kappa_ramp * ca.sumsqr(flow[1:] - flow[:steps - 1])                     # (13a) ramp cost
     cost += KAPPA * (water_level[steps] - water_level_now) ** 2                          # (14a)/(23a) terminal cost
     exchange = 0.5 * ca.sum1(ca.fabs(TIME_STEP * flow - water_consumption1)
                              + water_consumption2) * DEMAND_PERIOD_H / (steps * TIME_STEP)
@@ -239,11 +242,11 @@ def apply_safety(flow, water_level, water_consumption1, water_consumption2, flow
     return safe, abs(safe - flow) > 1e-9
 
 
-def run_open_loop(case, theta):
+def run_open_loop(case, theta, kappa_ramp=KAPPA_RAMP):
     # open loop: one MPC solve over the full window, nominal demand taken as
     # the truth, nothing replanned
     steps = len(case['hours'])
-    mpc = make_mpc(theta, steps, case['flow_max'])
+    mpc = make_mpc(theta, steps, case['flow_max'], kappa_ramp)
     flows, water_levels = solve_mpc(mpc, case['water_level_start'],
                                     case['water_demand1_forecast'], case['water_demand2_forecast'],
                                     case['price'],
@@ -258,7 +261,7 @@ def run_open_loop(case, theta):
     return water_levels[1:], flows, pressures, powers
 
 
-def run_receding_horizon(case, theta, seed, chance_constraints=True):
+def run_receding_horizon(case, theta, seed, chance_constraints=True, kappa_ramp=KAPPA_RAMP):
     # closed loop architecture: forecast -> solve_mpc (global controller,
     # chance-constrained unless disabled) -> safety projection (local
     # controller) -> step_env, the environment driven by the realized demand
@@ -266,7 +269,7 @@ def run_receding_horizon(case, theta, seed, chance_constraints=True):
         water_consumption1_realized, water_consumption2_realized, std1, std2 = \
         realize_demand(case, seed)
 
-    mpc = make_mpc(theta, HORIZON, case['flow_max'])
+    mpc = make_mpc(theta, HORIZON, case['flow_max'], kappa_ramp)
     water_levels, flows, pressures, powers = [], [], [], []
     interventions = 0
     water_level = case['water_level_start']
@@ -340,14 +343,17 @@ def main():
     parser.add_argument('--no-chance', action='store_true',
                         help='disable the v2 chance-constraint tightening in '
                              'the receding-horizon MPC (v1 deterministic bounds)')
+    parser.add_argument('--kappa-ramp', type=float, default=KAPPA_RAMP,
+                        help='v2 (13a) control-ramp cost weight (default 0)')
     parser.add_argument('--no-plot', action='store_true')
     arguments = parser.parse_args()
 
     case = load_case()
     print('model.json: N=%d harmonics, f_theta %s' % (
         case['n_harmonics'], {k: round(v, 6) for k, v in case['friction'].items()}))
-    print('case: flow max %.1f m3/h, level start %.3f m, window %.0f..%.0f h'
-          % (case['flow_max'], case['water_level_start'], START_HOUR, END_HOUR))
+    print('case: flow max %.1f m3/h, level start %.3f m, window %.0f..%.0f h, kappa_ramp %.3g'
+          % (case['flow_max'], case['water_level_start'], START_HOUR, END_HOUR,
+             arguments.kappa_ramp))
     theta = case['friction']
 
     if arguments.receding:
@@ -356,7 +362,8 @@ def main():
                              'water_demand2_forecast': case['water_demand2_forecast']}
         for seed in arguments.seeds:
             water_demand1, water_demand2, water_levels, flows, pressures, powers = run_receding_horizon(
-                case, theta, seed, chance_constraints=not arguments.no_chance)
+                case, theta, seed, chance_constraints=not arguments.no_chance,
+                kappa_ramp=arguments.kappa_ramp)
             runs.append({'label': 'seed %d' % seed,
                          'water_demand1_realized': water_demand1,
                          'water_demand2_realized': water_demand2,
@@ -376,7 +383,7 @@ def main():
         suffix = '_receding'
         write_csv(os.path.join(FOLDER, 'kallesoe_trajectory%s.csv' % suffix), columns)
     else:
-        water_levels, flows, pressures, powers = run_open_loop(case, theta)
+        water_levels, flows, pressures, powers = run_open_loop(case, theta, arguments.kappa_ramp)
         runs = [{'label': 'open loop',
                  'water_demand1_realized': case['water_demand1_forecast'],
                  'water_demand2_realized': case['water_demand2_forecast'],
