@@ -64,10 +64,12 @@ def load_digitised(path=DATA_CSV):
     return {key: np.array(values) for key, values in columns.items()}
 
 
-def water_consumption(hours, coefficients):
+def water_consumption(hours, coefficients, exact=False):
     # demand model g_lambda/lambda_0 and g_mu of eq. (8), (11): the
-    # instantaneous rate, and as the exact antiderivative of the same series
-    # over [t_k, t_k + dt] the interval consumption v_lambda / v_mu of (18)
+    # instantaneous rate, and the interval consumption v_lambda / v_mu.
+    # Default is the eq. (23c) sampled stand-in dt*g(t_k), the convention the
+    # recorded paper-reproduction runs use; exact=True integrates the series
+    # over [t_k, t_k + dt] as the exact antiderivative of eq. (18)
     hours = np.asarray(hours, dtype=float)
     w = 2 * np.pi / DEMAND_PERIOD_H
     rate = coefficients[0] * np.ones_like(hours)
@@ -76,12 +78,15 @@ def water_consumption(hours, coefficients):
         a, b = coefficients[2 * n - 1], coefficients[2 * n]
         angle = n * w * hours
         rate += a * np.cos(angle) + b * np.sin(angle)
-        consumption += (a * (np.sin(angle + n * w * TIME_STEP) - np.sin(angle))
-                        - b * (np.cos(angle + n * w * TIME_STEP) - np.cos(angle))) / (n * w)
+        if exact:
+            consumption += (a * (np.sin(angle + n * w * TIME_STEP) - np.sin(angle))
+                            - b * (np.cos(angle + n * w * TIME_STEP) - np.cos(angle))) / (n * w)
+        else:
+            consumption = TIME_STEP * rate
     return rate, consumption
 
 
-def load_case():
+def load_case(v_exact=False):
     with open(MODEL_JSON) as f:
         model = json.load(f)
 
@@ -96,8 +101,8 @@ def load_case():
         raise ValueError('simulation window must be a whole number of days: '
                          'the closed-loop forecast is indexed modulo 24 h')
 
-    demand1, consumption1 = water_consumption(hours, model['g_lambda'])
-    demand2, consumption2 = water_consumption(hours, model['g_mu'])
+    demand1, consumption1 = water_consumption(hours, model['g_lambda'], exact=v_exact)
+    demand2, consumption2 = water_consumption(hours, model['g_mu'], exact=v_exact)
 
     price_24h = [1.0] * 7 + [2.0] * 15 + [1.0] * 2    # price of Fig. 7, middle
     return {
@@ -345,14 +350,19 @@ def main():
                              'the receding-horizon MPC (v1 deterministic bounds)')
     parser.add_argument('--kappa-ramp', type=float, default=KAPPA_RAMP,
                         help='v2 (13a) control-ramp cost weight (default 0)')
+    parser.add_argument('--v-exact', action='store_true',
+                        help='eq. (18) exact interval integrals in the dynamics '
+                             'instead of the default eq. (23c) stand-in dt*g(t_k)')
     parser.add_argument('--no-plot', action='store_true')
     arguments = parser.parse_args()
 
-    case = load_case()
+    case = load_case(v_exact=arguments.v_exact)
     print('model.json: N=%d harmonics, f_theta %s' % (
         case['n_harmonics'], {k: round(v, 6) for k, v in case['friction'].items()}))
-    print('case: flow max %.1f m3/h, level start %.3f m, window %.0f..%.0f h, kappa_ramp %.3g'
+    print('case: flow max %.1f m3/h, level start %.3f m, window %.0f..%.0f h, '
+          'v_lambda %s, kappa_ramp %.3g'
           % (case['flow_max'], case['water_level_start'], START_HOUR, END_HOUR,
+             'eq. 18 exact' if arguments.v_exact else 'eq. 23c stand-in',
              arguments.kappa_ramp))
     theta = case['friction']
 
