@@ -1,4 +1,2 @@
 kallesoe_trajectory*
-*.png
 __pycache__/
-!kallesoe_trajectory_receding.png
